@@ -19,16 +19,9 @@ def _ffmpeg_bin() -> Optional[str]:
     if _FFMPEG_READY:
         return _FFMPEG
     _FFMPEG_READY = True
-    found = shutil.which("ffmpeg")
-    if found:
-        _FFMPEG = found
-        return _FFMPEG
-    try:
-        from imageio_ffmpeg import get_ffmpeg_exe
-
-        _FFMPEG = get_ffmpeg_exe()
-    except Exception:
-        _FFMPEG = None
+    # System ffmpeg only. imageio-ffmpeg downloads a large binary on first use
+    # and made even tiny uploads hang for tens of seconds.
+    _FFMPEG = shutil.which("ffmpeg")
     return _FFMPEG
 
 
@@ -55,7 +48,7 @@ def extract_video_poster(media_url: str) -> Optional[str]:
 
     UPLOADS.mkdir(parents=True, exist_ok=True)
     dest = UPLOADS / f"poster_{uuid4().hex[:10]}.jpg"
-    kwargs: dict = {"capture_output": True, "timeout": 8}
+    kwargs: dict = {"capture_output": True, "timeout": 2}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
@@ -66,8 +59,9 @@ def extract_video_poster(media_url: str) -> Optional[str]:
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                "-noaccurate_seek",
                 "-ss",
-                "1",
+                "0.2",
                 "-i",
                 str(src),
                 "-an",

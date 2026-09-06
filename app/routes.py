@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from . import models
-from .database import DATA_DIR, get_db
+from .database import DATA_DIR, SessionLocal, get_db
 from .deps import (
     can_play_episode,
     get_admin,
@@ -67,13 +67,57 @@ def nid(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
-def save_upload(file: UploadFile, prefix: str) -> str:
+VIDEO_SUFFIXES = {".mp4", ".webm", ".mov", ".mkv", ".m4v", ".avi"}
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac", ".opus"}
+
+
+def _suffix(name: str | None) -> str:
+    return Path(name or "").suffix.lower()
+
+
+def _looks_like_video(file: Optional[UploadFile], media_type: str, url: str) -> bool:
+    if (media_type or "").upper() == "VIDEO":
+        return True
+    if file and file.content_type and file.content_type.startswith("video"):
+        return True
+    return _suffix(file.filename if file else url) in VIDEO_SUFFIXES
+
+
+def _looks_like_audio(file: Optional[UploadFile], media_type: str) -> bool:
+    if (media_type or "").upper() == "AUDIO":
+        return True
+    if file and file.content_type and file.content_type.startswith("audio"):
+        return True
+    return _suffix(file.filename if file else "") in AUDIO_SUFFIXES
+
+
+async def save_upload(file: UploadFile, prefix: str) -> str:
     UPLOADS.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename or "bin").suffix or ".bin"
-    name = f"{prefix}_{uuid4().hex[:10]}{suffix.lower()}"
+    suffix = _suffix(file.filename) or ".bin"
+    name = f"{prefix}_{uuid4().hex[:10]}{suffix}"
     dest = UPLOADS / name
-    dest.write_bytes(file.file.read())
+    with dest.open("wb") as out:
+        while True:
+            chunk = await file.read(256 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+    await file.close()
     return f"/media/uploads/{name}"
+
+
+def _fill_missing_poster(episode_id: str, media_url: str) -> None:
+    poster = extract_video_poster(media_url)
+    if not poster:
+        return
+    db = SessionLocal()
+    try:
+        row = db.get(models.Episode, episode_id)
+        if row and not row.poster_url:
+            row.poster_url = poster
+            db.commit()
+    finally:
+        db.close()
 
 
 class PhoneIn(BaseModel):
@@ -635,6 +679,7 @@ def create_episode(body: EpisodeIn, db: Session = Depends(get_db)):
 
 @router.post("/episodes/upload", dependencies=[Depends(get_admin)])
 async def upload_episode(
+    background_tasks: BackgroundTasks,
     seriesId: str = Form(...),
     title: str = Form(...),
     titleSw: str = Form(...),
@@ -651,19 +696,18 @@ async def upload_episode(
     db: Session = Depends(get_db),
 ):
     url = mediaUrl.strip()
-    if file and file.filename:
-        url = save_upload(file, "ep")
-        if file.content_type and file.content_type.startswith("video"):
+    uploaded = file if file and file.filename else None
+    if uploaded:
+        url = await save_upload(uploaded, "ep")
+        if _looks_like_video(uploaded, mediaType, url):
             mediaType = "VIDEO"
-        elif file.content_type and file.content_type.startswith("audio"):
+        elif _looks_like_audio(uploaded, mediaType):
             mediaType = "AUDIO"
     if not url:
         raise HTTPException(status_code=400, detail="Provide a file upload or a media URL")
     poster_url = None
     if poster and poster.filename:
-        poster_url = save_upload(poster, "poster")
-    elif mediaType == "VIDEO":
-        poster_url = extract_video_poster(url)
+        poster_url = await save_upload(poster, "poster")
     row = models.Episode(
         id=nid("ep"),
         series_id=seriesId,
@@ -682,6 +726,8 @@ async def upload_episode(
     db.add(row)
     db.commit()
     db.refresh(row)
+    if not poster_url and _looks_like_video(uploaded, mediaType, url):
+        background_tasks.add_task(_fill_missing_poster, row.id, url)
     return episode_out(row)
 
 
