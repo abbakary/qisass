@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from .config import settings
-from .phone import normalize_phone
+from .phone import normalize_phone, phones_match
 from .security import hash_password, utcnow
 
 CATEGORIES = [
@@ -19,8 +19,7 @@ def seed_if_empty(db: Session) -> None:
     if settings.fresh_start:
         seed_all(db)
         return
-    if not db.query(models.User).first():
-        _ensure_admin(db)
+    _ensure_admin(db)
     if not db.query(models.Category).first():
         _ensure_categories(db)
     demo = (
@@ -65,10 +64,15 @@ def seed_all(db: Session) -> None:
 
 def _ensure_admin(db: Session) -> models.User:
     phone = normalize_phone(settings.admin_phone)
-    existing = db.query(models.User).filter(models.User.phone == phone).first()
+    users = db.query(models.User).all()
+    existing = next((u for u in users if phones_match(u.phone, phone)), None)
+    if not existing:
+        existing = db.query(models.User).filter(models.User.id == "user-admin").first()
     if existing:
+        existing.phone = phone
         existing.role = "ADMIN"
         existing.subscription_status = "ACTIVE"
+        existing.password_hash = hash_password(settings.admin_password)
         return existing
     admin = models.User(
         id="user-admin",

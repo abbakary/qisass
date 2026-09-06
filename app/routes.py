@@ -43,7 +43,7 @@ from .serialize import (
     video_job_out,
 )
 from .services.ai_engine import generate_story, generate_storyboard
-from .services.otp import require_otp_ticket, send_challenge, verify_challenge
+from .services.otp import send_challenge, verify_challenge
 from .seed import seed_all
 from .video_poster import extract_video_poster
 from .monetize import (
@@ -314,7 +314,6 @@ def check_phone(body: PhoneIn, db: Session = Depends(get_db)):
 @router.post("/auth/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
     ident = (body.phone or body.identifier or "").strip()
-    require_otp_ticket(body.otpTicket, ident)
     user = find_user_by_phone(db, ident)
     if not user:
         user = db.query(models.User).filter(models.User.email == ident.lower()).first()
@@ -327,7 +326,7 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 @router.post("/auth/register")
 def register(body: RegisterIn, db: Session = Depends(get_db)):
-    phone = require_otp_ticket(body.otpTicket, body.phone)
+    phone = normalize_phone(body.phone)
     if find_user_by_phone(db, phone):
         raise HTTPException(status_code=409, detail="Phone already registered")
     digits = "".join(ch for ch in phone if ch.isdigit()) or "user"
