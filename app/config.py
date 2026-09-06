@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     otp_expire_seconds: int = 300
     otp_resend_seconds: int = 45
     otp_dev_accept_any: bool = True
+    # False = phone + password only. Set OTP_REQUIRED=1 when SMS is live.
+    otp_required: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:

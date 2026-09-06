@@ -162,6 +162,8 @@ def verify_challenge(db: Session, raw_phone: str, code: str, challenge_id: str |
 
 def require_otp_ticket(ticket: str | None, raw_phone: str) -> str:
     phone = normalize_phone(raw_phone)
+    if not settings.otp_required:
+        return phone
     if not ticket:
         raise HTTPException(status_code=403, detail="Verify your phone number first")
     try:
