@@ -45,7 +45,7 @@ from .serialize import (
 from .services.ai_engine import generate_story, generate_storyboard
 from .services.otp import send_challenge, verify_challenge
 from .seed import seed_all
-from .video_poster import extract_video_poster
+from .video_poster import extract_video_poster, write_fallback_poster
 from .monetize import (
     STARTER_BUNDLE_COUNT,
     STARTER_BUNDLE_TZS,
@@ -113,7 +113,7 @@ def _fill_missing_poster(episode_id: str, media_url: str) -> None:
     db = SessionLocal()
     try:
         row = db.get(models.Episode, episode_id)
-        if row and not row.poster_url:
+        if row:
             row.poster_url = poster
             db.commit()
     finally:
@@ -708,6 +708,8 @@ async def upload_episode(
     poster_url = None
     if poster and poster.filename:
         poster_url = await save_upload(poster, "poster")
+    if not poster_url:
+        poster_url = write_fallback_poster(int(order) if order else 1)
     row = models.Episode(
         id=nid("ep"),
         series_id=seriesId,
