@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import shutil
 import struct
 import subprocess
@@ -30,7 +31,19 @@ def write_fallback_poster(order: int = 1) -> str:
     UPLOADS.mkdir(parents=True, exist_ok=True)
     dest = UPLOADS / f"poster_{uuid4().hex[:10]}.png"
     dest.write_bytes(_solid_png(320, 180, PALETTES[max(0, order - 1) % len(PALETTES)]))
-    return f"/media/uploads/{dest.name}"
+    return persist_poster_url(f"/media/uploads/{dest.name}")
+
+
+def persist_poster_url(rel_url: str) -> str:
+    """Keep a small poster in the DB as a data URL so covers survive Railway disk wipes."""
+    src = local_upload_path(rel_url)
+    if not src:
+        return rel_url
+    raw = src.read_bytes()
+    if not raw or len(raw) > 400_000:
+        return rel_url
+    mime = "image/png" if src.suffix.lower() == ".png" else "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
 def _solid_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
@@ -114,7 +127,7 @@ def extract_video_poster(media_url: str) -> Optional[str]:
         return None
 
     if result.returncode == 0 and dest.is_file() and dest.stat().st_size > 800:
-        return f"/media/uploads/{dest.name}"
+        return persist_poster_url(f"/media/uploads/{dest.name}")
     if dest.exists():
         dest.unlink(missing_ok=True)
     return None

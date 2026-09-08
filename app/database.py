@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -6,7 +7,18 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = Path(settings.data_dir) if settings.data_dir else ROOT / "data"
+
+
+def _resolve_data_dir() -> Path:
+    if settings.data_dir:
+        return Path(settings.data_dir)
+    railway = Path("/data")
+    if railway.is_dir() and os.access(railway, os.W_OK):
+        return railway
+    return ROOT / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "uploads").mkdir(parents=True, exist_ok=True)
 
@@ -67,41 +79,37 @@ def migrate_schema() -> None:
             except Exception:
                 pass
         try:
-            conn.exec_driver_sql('UPDATE episodes SET is_free = 1 WHERE "order" <= 3')
-            conn.exec_driver_sql('UPDATE episodes SET is_free = 0 WHERE "order" > 3')
+            conn.exec_driver_sql('UPDATE episodes SET is_free = 1 WHERE "order" <= 1')
+            conn.exec_driver_sql('UPDATE episodes SET is_free = 0 WHERE "order" > 1')
         except Exception:
             pass
+        for sql in (
+            "ALTER TABLE episodes ALTER COLUMN poster_url TYPE TEXT",
+            "ALTER TABLE series ALTER COLUMN image TYPE TEXT",
+            "ALTER TABLE series ALTER COLUMN backdrop_image TYPE TEXT",
+        ):
+            try:
+                conn.exec_driver_sql(sql)
+            except Exception:
+                pass
         try:
-            rows = conn.exec_driver_sql("SELECT id FROM series").all()
+            from sqlalchemy import text
+
+            rows = conn.execute(text("SELECT id FROM series")).all()
             for (sid,) in rows:
-                n = conn.exec_driver_sql(
-                    "SELECT COUNT(*) FROM episodes WHERE series_id = ?",
-                    (sid,),
+                n = conn.execute(
+                    text("SELECT COUNT(*) FROM episodes WHERE series_id = :sid"),
+                    {"sid": sid},
                 ).scalar() or 0
                 price = 500 if n <= 6 else 1000 if n <= 14 else 1500
-                current = conn.exec_driver_sql(
-                    "SELECT unlock_price_tzs FROM series WHERE id = ?",
-                    (sid,),
+                current = conn.execute(
+                    text("SELECT unlock_price_tzs FROM series WHERE id = :sid"),
+                    {"sid": sid},
                 ).scalar()
                 if current in (None, 0, 1000) and price != 1000:
-                    conn.exec_driver_sql(
-                        "UPDATE series SET unlock_price_tzs = ? WHERE id = ?",
-                        (price, sid),
-                    )
-        except Exception:
-            pass
-        try:
-            flagged = conn.exec_driver_sql(
-                "SELECT COUNT(*) FROM series WHERE is_story_of_week = 1"
-            ).scalar()
-            if not flagged:
-                pick = conn.exec_driver_sql(
-                    "SELECT id FROM series WHERE published = 1 ORDER BY featured DESC, views DESC LIMIT 1"
-                ).first()
-                if pick:
-                    conn.exec_driver_sql(
-                        "UPDATE series SET is_story_of_week = 1 WHERE id = ?",
-                        (pick[0],),
+                    conn.execute(
+                        text("UPDATE series SET unlock_price_tzs = :price WHERE id = :sid"),
+                        {"price": price, "sid": sid},
                     )
         except Exception:
             pass

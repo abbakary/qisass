@@ -45,7 +45,7 @@ from .serialize import (
 from .services.ai_engine import generate_story, generate_storyboard
 from .services.otp import send_challenge, verify_challenge
 from .seed import seed_all
-from .video_poster import extract_video_poster, write_fallback_poster
+from .video_poster import extract_video_poster, persist_poster_url, write_fallback_poster
 from .monetize import (
     STARTER_BUNDLE_COUNT,
     STARTER_BUNDLE_TZS,
@@ -449,6 +449,8 @@ def bootstrap(
     }
     sow = story_of_week(db)
     payload["storyOfWeekId"] = sow.id if sow else None
+    for item in payload["series"]:
+        item["isStoryOfWeek"] = bool(sow and item.get("id") == sow.id)
     if user:
         bump_streak(db, user)
         db.commit()
@@ -707,9 +709,7 @@ async def upload_episode(
         raise HTTPException(status_code=400, detail="Provide a file upload or a media URL")
     poster_url = None
     if poster and poster.filename:
-        poster_url = await save_upload(poster, "poster")
-    if not poster_url:
-        poster_url = write_fallback_poster(int(order) if order else 1)
+        poster_url = persist_poster_url(await save_upload(poster, "poster"))
     row = models.Episode(
         id=nid("ep"),
         series_id=seriesId,
@@ -721,7 +721,7 @@ async def upload_episode(
         duration_sec=durationSec,
         media_url=url,
         media_type=mediaType,
-        poster_url=poster_url,
+        poster_url=poster_url or write_fallback_poster(int(order) if order else 1),
         is_free=True if int(order) <= FREE_EPISODE_COUNT else str(isFree).lower() in {"1", "true", "yes", "on"},
         published=str(published).lower() in {"1", "true", "yes", "on"},
     )

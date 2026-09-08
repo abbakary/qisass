@@ -10,6 +10,8 @@ def public_url(url: Optional[str]) -> Optional[str]:
     """Point media at a CDN origin when MEDIA_CDN_BASE is set — YouTube-style edge URLs."""
     if not url:
         return url
+    if url.startswith("data:") or url.startswith("blob:"):
+        return url
     base = (settings.media_cdn_base or "").rstrip("/")
     if base and url.startswith("/media/"):
         return f"{base}{url}"
@@ -128,7 +130,7 @@ def episode_out(e: models.Episode, liked: bool = False) -> dict[str, Any]:
         "mediaUrl": public_url(e.media_url),
         "mediaType": e.media_type,
         "posterUrl": public_url(e.poster_url),
-        "isFree": e.is_free,
+        "isFree": (e.order or 0) <= 1,
         "views": e.views,
         "likes": e.likes,
         "likedByMe": liked,

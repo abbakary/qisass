@@ -12,11 +12,11 @@ from .security import utcnow
 
 STARTER_BUNDLE_COUNT = 3
 STARTER_BUNDLE_TZS = 2000
-FREE_EPISODE_COUNT = 3
+FREE_EPISODE_COUNT = 1
 
 
 def is_free_episode(episode: models.Episode) -> bool:
-    return episode.order <= FREE_EPISODE_COUNT or bool(episode.is_free)
+    return (episode.order or 0) <= FREE_EPISODE_COUNT
 
 
 def price_for_episode_count(count: int) -> int:
@@ -52,22 +52,15 @@ def user_owns_series(db: Session, user: Optional[models.User], series_id: str) -
 
 
 def story_of_week(db: Session) -> Optional[models.Series]:
-    flagged = (
+    """Fully free gift from the paid catalog. Never the entire catalog."""
+    published_n = db.query(models.Series).filter(models.Series.published.is_(True)).count()
+    if published_n < 2:
+        return None
+    return (
         db.query(models.Series)
         .filter(models.Series.is_story_of_week.is_(True), models.Series.published.is_(True))
         .first()
     )
-    if flagged:
-        return flagged
-    published = (
-        db.query(models.Series)
-        .filter(models.Series.published.is_(True))
-        .order_by(models.Series.views.desc())
-        .all()
-    )
-    if not published:
-        return None
-    return published[date.today().isocalendar().week % len(published)]
 
 
 def consume_sponsor_grant(db: Session, user: models.User, series: models.Series) -> bool:

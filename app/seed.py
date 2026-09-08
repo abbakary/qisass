@@ -30,6 +30,24 @@ def seed_if_empty(db: Session) -> None:
     if demo:
         db.delete(demo)
     db.commit()
+    _backfill_posters(db)
+
+
+def _backfill_posters(db: Session) -> None:
+    from .video_poster import local_upload_path, persist_poster_url, write_fallback_poster
+
+    changed = False
+    for ep in db.query(models.Episode).all():
+        url = ep.poster_url or ""
+        if url.startswith("data:"):
+            continue
+        if local_upload_path(url):
+            ep.poster_url = persist_poster_url(url)
+        else:
+            ep.poster_url = write_fallback_poster(ep.order or 1)
+        changed = True
+    if changed:
+        db.commit()
 
 
 def seed_all(db: Session) -> None:
